@@ -8,6 +8,7 @@ import (
 	"provision-server/internal/models"
 	mqttsvc "provision-server/internal/mqtt"
 	"provision-server/internal/services"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,17 +30,23 @@ func PushOTA(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 		return
 	}
-
-	var fw models.Firmware
-	if err := db.DB.First(&fw, req.FirmwareID).Error; err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "firmware not found"})
+	result, code, msg := doPushOTA(&req)
+	if code != 0 {
+		c.JSON(http.StatusOK, gin.H{"code": code, "msg": msg})
 		return
 	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": result})
+}
 
-	devices, err := selectDevicesForOTA(&req, &fw)
+func doPushOTA(req *PushOTAReq) (interface{}, int, string) {
+	var fw models.Firmware
+	if err := db.DB.First(&fw, req.FirmwareID).Error; err != nil {
+		return nil, 1, "firmware not found"
+	}
+
+	devices, err := selectDevicesForOTA(req, &fw)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
-		return
+		return nil, 1, err.Error()
 	}
 
 	now := time.Now()
@@ -62,13 +69,13 @@ func PushOTA(c *gin.Context) {
 
 		if mqttsvc.Instance != nil {
 			payload := map[string]interface{}{
-				"job_id":      job.ID,
-				"firmware_id": fw.ID,
-				"version":     fw.Version,
-				"file_name":   fw.FileName,
-				"file_size":   fw.FileSize,
-				"md5_sum":     fw.MD5Sum,
-				"min_version": fw.MinVersion,
+				"job_id":       job.ID,
+				"firmware_id":  fw.ID,
+				"version":      fw.Version,
+				"file_name":    fw.FileName,
+				"file_size":    fw.FileSize,
+				"md5_sum":      fw.MD5Sum,
+				"min_version":  fw.MinVersion,
 				"download_url": "",
 			}
 			topic := "device/" + d.DeviceSN + "/ota/upgrade"
@@ -77,15 +84,11 @@ func PushOTA(c *gin.Context) {
 		successCount++
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code": 0,
-		"msg":  "ok",
-		"data": gin.H{
-			"total":   len(devices),
-			"success": successCount,
-			"failed":  failCount,
-		},
-	})
+	return gin.H{
+		"total":   len(devices),
+		"success": successCount,
+		"failed":  failCount,
+	}, 0, ""
 }
 
 func selectDevicesForOTA(req *PushOTAReq, fw *models.Firmware) ([]models.Device, error) {
@@ -191,4 +194,14 @@ func GetDeviceOTAStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": jobs})
+}
+
+func GetOTAJob(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	var job models.OTAJob
+	if err := db.DB.First(&job, id).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": "OTA job not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": job})
 }

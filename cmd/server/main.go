@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"provision-server/internal/config"
 	"provision-server/internal/db"
 	"provision-server/internal/handlers"
@@ -12,21 +14,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func ensureDirs() {
+	dirs := []string{
+		config.App.FirmwareDir,
+		filepath.Dir(config.App.DBPath),
+	}
+	for _, d := range dirs {
+		if d == "" || d == "." {
+			continue
+		}
+		if err := os.MkdirAll(d, 0755); err != nil {
+			log.Printf("[WARN] mkdir %s failed: %v", d, err)
+		}
+	}
+}
+
 func main() {
 	config.Load()
+	ensureDirs()
+
+	log.Println("[Init] config loaded, port:", config.App.Port)
+	log.Println("[Init] db path:", config.App.DBPath)
+	log.Println("[Init] firmware dir:", config.App.FirmwareDir)
+	log.Println("[Init] mqtt broker:", config.App.MQTTBroker)
 
 	if err := db.Init(config.App.DBPath); err != nil {
 		log.Fatal("failed to init db:", err)
 	}
+	log.Println("[Init] db OK")
 
 	if err := services.InitCA(); err != nil {
 		log.Fatal("failed to init CA:", err)
 	}
-
-	mqttSvc := mqttsvc.New()
-	if err := mqttSvc.Connect(); err != nil {
-		log.Println("[WARN] mqtt connect failed:", err)
-	}
+	log.Println("[Init] CA OK")
 
 	r := gin.Default()
 
@@ -39,6 +59,15 @@ func main() {
 			return
 		}
 		c.Next()
+	})
+
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"code":    0,
+			"msg":     "ok",
+			"status":  "running",
+			"version": "1.0.0",
+		})
 	})
 
 	api := r.Group("/api/v1")
@@ -60,13 +89,13 @@ func main() {
 			provision.GET("/:sn/download", handlers.DownloadProvision)
 		}
 
-		models := api.Group("/models")
+		modelsGroup := api.Group("/models")
 		{
-			models.GET("", handlers.ListModels)
-			models.GET("/:id", handlers.GetModel)
-			models.POST("", handlers.CreateModel)
-			models.PUT("/:id", handlers.UpdateModel)
-			models.DELETE("/:id", handlers.DeleteModel)
+			modelsGroup.GET("", handlers.ListModels)
+			modelsGroup.GET("/:id", handlers.GetModel)
+			modelsGroup.POST("", handlers.CreateModel)
+			modelsGroup.PUT("/:id", handlers.UpdateModel)
+			modelsGroup.DELETE("/:id", handlers.DeleteModel)
 		}
 
 		batches := api.Group("/batches")
@@ -110,6 +139,7 @@ func main() {
 		{
 			ota.POST("/push", handlers.PushOTA)
 			ota.GET("/jobs", handlers.ListOTAJobs)
+			ota.GET("/jobs/:id", handlers.GetOTAJob)
 			ota.GET("/devices/:sn", handlers.GetDeviceOTAStatus)
 		}
 
@@ -129,6 +159,16 @@ func main() {
 			stats.GET("/failure-rate", handlers.StatsFailureRate)
 		}
 	}
+
+	log.Println("[Init] routes registered")
+
+	mqttSvc := mqttsvc.New()
+	go func() {
+		if err := mqttSvc.Connect(); err != nil {
+			log.Println("[WARN] mqtt connect failed (will retry):", err)
+		}
+	}()
+	log.Println("[Init] mqtt connect started in background")
 
 	addr := fmt.Sprintf("0.0.0.0:%d", config.App.Port)
 	log.Println("[Server] starting on", addr)

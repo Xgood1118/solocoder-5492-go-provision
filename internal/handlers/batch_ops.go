@@ -95,7 +95,7 @@ func BatchOTA(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 1, "msg": err.Error()})
 		return
 	}
-	otaReq := PushOTAReq{
+	otaReq := &PushOTAReq{
 		FirmwareID: req.FirmwareID,
 		DeviceSNs:  req.DeviceSNs,
 		BatchID:    req.BatchID,
@@ -104,8 +104,12 @@ func BatchOTA(c *gin.Context) {
 		Customer:   req.Customer,
 		UseGray:    req.UseGray,
 	}
-	c.Set("ota_req", &otaReq)
-	PushOTA(c)
+	result, code, msg := doPushOTA(otaReq)
+	if code != 0 {
+		c.JSON(http.StatusOK, gin.H{"code": code, "msg": msg})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "ok", "data": result})
 }
 
 type BatchStatusChangeReq struct {

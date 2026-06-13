@@ -51,7 +51,9 @@ func (s *Service) Connect() error {
 		AddBroker(config.App.MQTTBroker).
 		SetClientID(config.App.MQTTClientID + "-" + strconv.Itoa(int(time.Now().Unix()))).
 		SetAutoReconnect(true).
-		SetConnectRetry(true)
+		SetConnectRetry(false).
+		SetMaxReconnectInterval(60 * time.Second).
+		SetConnectTimeout(10 * time.Second)
 
 	if config.App.MQTTUser != "" {
 		opts = opts.SetUsername(config.App.MQTTUser)
@@ -67,10 +69,15 @@ func (s *Service) Connect() error {
 	opts.OnConnectionLost = func(c mqtt.Client, err error) {
 		log.Println("[MQTT] connection lost:", err)
 	}
+	opts.OnReconnecting = func(c mqtt.Client, o *mqtt.ClientOptions) {
+		log.Println("[MQTT] reconnecting...")
+	}
 
 	s.client = mqtt.NewClient(opts)
 	tok := s.client.Connect()
-	tok.Wait()
+	if !tok.WaitTimeout(10 * time.Second) {
+		return fmt.Errorf("mqtt connect timeout after 10s")
+	}
 	if tok.Error() != nil {
 		return tok.Error()
 	}

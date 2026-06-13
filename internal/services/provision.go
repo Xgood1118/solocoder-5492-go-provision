@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"provision-server/internal/certgen"
 	"provision-server/internal/config"
 	"provision-server/internal/db"
@@ -29,8 +30,13 @@ func InitCA() error {
 }
 
 func loadOrCreateCA() (*x509.Certificate, *rsa.PrivateKey, error) {
-	caCertPath := config.App.FirmwareDir + "/../ca.crt"
-	caKeyPath := config.App.FirmwareDir + "/../ca.key"
+	baseDir := filepath.Clean(filepath.Join(config.App.FirmwareDir, ".."))
+	caCertPath := filepath.Join(baseDir, "ca.crt")
+	caKeyPath := filepath.Join(baseDir, "ca.key")
+
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return nil, nil, fmt.Errorf("mkdir %s: %w", baseDir, err)
+	}
 
 	if _, err := os.Stat(caCertPath); err == nil {
 		certPEM, err := os.ReadFile(caCertPath)
@@ -60,7 +66,6 @@ func loadOrCreateCA() (*x509.Certificate, *rsa.PrivateKey, error) {
 		return cert, key, nil
 	}
 
-	_ = os.MkdirAll(config.App.FirmwareDir+"/..", 0755)
 	cert, key, certPEM, keyPEM, err := certgen.GenerateCA()
 	if err != nil {
 		return nil, nil, err
